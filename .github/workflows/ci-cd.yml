@@ -1,0 +1,104 @@
+# CI/CD конвейер команды №2
+#   CI  — непрерывная интеграция: компиляция и автотесты на каждый push и pull request;
+#   CD  — непрерывная доставка: готовый .jar публикуется как артефакт каждого запуска;
+#   CD  — непрерывное развёртывание: при push тега v* автоматически создаётся GitHub Release с .jar.
+# Если в папке src ещё нет кода, сборка пропускается без ошибки.
+
+name: CI/CD
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: CI — сборка и тесты
+    runs-on: ubuntu-latest
+    env:
+      LC_ALL: C.UTF-8   # кириллица в именах файлов и выводе программ
+    outputs:
+      has_code: ${{ steps.check.outputs.has_code }}
+      app_name: ${{ steps.check.outputs.app_name }}
+
+    steps:
+      - name: Получение кода из репозитория
+        uses: actions/checkout@v4
+
+      - name: Проверка наличия исходного кода
+        id: check
+        run: |
+          # имя .jar = имя репозитория без ведущих дефисов
+          APP_NAME=$(echo "${{ github.event.repository.name }}" | sed 's/^-*//')
+          echo "app_name=$APP_NAME" >> "$GITHUB_OUTPUT"
+          if ls src/*.java >/dev/null 2>&1; then
+            echo "has_code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_code=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::В папке src пока нет .java-файлов — сборка пропущена"
+          fi
+
+      - name: Установка JDK 17
+        if: steps.check.outputs.has_code == 'true'
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Компиляция
+        if: steps.check.outputs.has_code == 'true'
+        run: |
+          mkdir -p out
+          javac -encoding UTF-8 -d out src/*.java
+
+      - name: Автотесты
+        if: steps.check.outputs.has_code == 'true' && hashFiles('ci/test.sh') != ''
+        run: bash ci/test.sh out
+
+      - name: Сборка .jar
+        if: steps.check.outputs.has_code == 'true'
+        run: |
+          JAR="${{ steps.check.outputs.app_name }}.jar"
+          MAINS=$(grep -l "static void main" src/*.java || true)
+          if [ "$(echo "$MAINS" | grep -c .)" -eq 1 ]; then
+            # одна точка входа — jar запускается командой java -jar
+            jar --create --file "$JAR" --main-class "$(basename "$MAINS" .java)" -C out .
+          else
+            # несколько программ — запуск: java -cp <файл>.jar <ИмяКласса>
+            jar --create --file "$JAR" -C out .
+          fi
+          ls -l "$JAR"
+
+      - name: Доставка — публикация артефакта
+        if: steps.check.outputs.has_code == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.check.outputs.app_name }}
+          path: ${{ steps.check.outputs.app_name }}.jar
+          retention-days: 30
+
+  release:
+    name: CD — развёртывание релиза
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') && needs.build.outputs.has_code == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Получение собранного .jar
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.app_name }}
+
+      - name: Публикация GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ needs.build.outputs.app_name }}.jar
+          generate_release_notes: true
