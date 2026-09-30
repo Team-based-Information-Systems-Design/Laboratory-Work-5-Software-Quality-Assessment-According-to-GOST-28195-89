@@ -79,7 +79,7 @@ public class ReliabilityCalculator {
         p12 = p24M * 0.5 + p25M * 0.5;
 
         // Относительный показатель (формула 5)
-        k12 = p12 / pBas;
+        k12 = Math.max(0.0, Math.min(1.0, p12 / pBas));
 
         // Фактор надёжности (формула 6)
         kFactor = k12 * 1.0;
