@@ -2,7 +2,6 @@ import java.io.*;
 import java.nio.file.*;
 import java.util.*;
 
-
 public class ReliabilityCalculator {
 
     private int Q, N;
@@ -14,6 +13,8 @@ public class ReliabilityCalculator {
     private double p24M, p25M;         // Метрики
     private double p12, k12;           // Критерий
     private double kFactor;            // Фактор
+
+    Random random = new Random();
 
     public static void main(String[] args) {
         new ReliabilityCalculator().run(
@@ -63,13 +64,27 @@ public class ReliabilityCalculator {
         return v;
     }
 
+    private double[] generateUniform(int count, double min, double max) {
+        double[] values = new double[count];
+        for (int i = 0; i < count; i++) {
+            values[i] = random.nextDouble(min, max);
+        }
+        return values;
+    }
+
     private void calculate() {
         // Оценочные элементы
         m41 = 1.0 - (double) Q / N;
-        double tvMean = (tvMin + tvMax) / 2.0;
+
+        Double tvMean = mean(generateUniform(100, tvMin, tvMax));
         m51 = (tvMean > tvDop) ? tvDop / tvMean : 1.0;
-        double tpMean = (tpMin + tpMax) / 2.0;
-        m52 = (tpMean <= tpDop) ? 1.0 : tpDop / tpMean;
+
+        double[] tpSample = generateUniform(200, tpMin, tpMax);
+        double sum52 = 0.0;
+        for (double tp : tpSample) {
+            sum52 += (tp <= tpDop) ? 1.0 : tpDop / tp;
+        }
+        m52 = sum52 / 200;
 
         // Метрики (формула 3)
         p24M = m41;
@@ -79,25 +94,26 @@ public class ReliabilityCalculator {
         p12 = p24M * 0.5 + p25M * 0.5;
 
         // Относительный показатель (формула 5)
-        k12 = Math.max(0.0, Math.min(1.0, p12 / pBas));
+        k12 = p12 / pBas;
 
         // Фактор надёжности (формула 6)
         kFactor = k12 * 1.0;
+    }
 
-        // Округление
-        m41 = round(m41); m51 = round(m51); m52 = round(m52);
-        p24M = round(p24M); p25M = round(p25M);
-        p12 = round(p12); k12 = round(k12); kFactor = round(kFactor);
+    private double mean(double[] values) {
+        double sum = 0.0;
+        for (double v : values) sum += v;
+        return sum / values.length;
     }
 
     private void writeOutput(String filename) throws IOException {
         StringBuilder sb = new StringBuilder();
         sb.append(String.format("Q = %d (отказы)%n", Q));
         sb.append(String.format("N = %d (эксперименты)%n", N));
-        sb.append(String.format("Tv_ср = %s с, Tvдоп = %s с%n",
-                round((tvMin + tvMax) / 2.0), tvDop));
-        sb.append(String.format("Tp_ср = %s с, Tpдоп = %s с%n",
-                round((tpMin + tpMax) / 2.0), tpDop));
+        sb.append(String.format("Tv: R[%s; %s], 100 значений, Tvдоп = %s с%n",
+                tvMin, tvMax, tvDop));
+        sb.append(String.format("Tp: R[%s; %s], 200 значений, Tpдоп = %s с%n",
+                tpMin, tpMax, tpDop));
         sb.append(String.format("P_баз = %s%n%n", pBas));
 
         sb.append(String.format("m41 = %s (безотказность)%n", m41));
@@ -110,9 +126,5 @@ public class ReliabilityCalculator {
         sb.append(String.format("%nK_ф = %s (ФАКТОР НАДЁЖНОСТИ)%n", kFactor));
 
         Files.write(Paths.get(filename), sb.toString().getBytes());
-    }
-
-    private double round(double v) {
-        return Math.round(v * 10000.0) / 10000.0;
     }
 }
